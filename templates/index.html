@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Analyzer</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        body {
+            background-color: rgb(230, 241, 250);
+            font-family: Arial, sans-serif;
+            color: #03000b;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .title-bar {
+            width: 100%;
+            background-color: #589ff6;
+            color: white;
+            padding: 20px 0;
+            text-align: center;
+        }
+        h1 {
+            margin: 0;
+            font-size: 2.5em;
+        }
+        button {
+            background-color: #589ff6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 10px;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+        button:disabled {
+            background-color: #54b5fb;
+            cursor: not-allowed;
+        }
+        h2 {
+            color: #6924e7;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            max-width: 600px;
+        }
+        th, td {
+            border: 1px solid #396ffa;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #396ff6;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        ul {
+            list-style-type: none;
+            padding: 0;
+        }
+        li {
+            background-color: #87f6f8;
+            margin: 5px 0;
+            padding: 10px;
+            border-radius: 5px;
+            color: black;
+        }
+        #audio-player {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="title-bar">
+        <h1>Voice Analyzer</h1>
+    </div>
+    <button id="start-record">Start Recording</button>
+    <button id="stop-record" disabled>Stop Recording</button>
+    <button id="play-audio" style="display:none;">Play Audio</button>
+    <button id="transcribe-audio" style="display:none;">Transcribe</button>
+    <button id="translate-text" style="display:none;">Translate</button>
+    
+    <h2>Transcription</h2>
+    <p id="transcription"></p>
+    
+    <h2>Translated Text</h2>
+    <p id="translated-text"></p>
+    
+    <h2>Most Frequent Words</h2>
+    <table id="frequent-words-table">
+        <thead>
+            <tr>
+                <th>Word</th>
+                <th>Frequency</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+    
+    <h2>Unique Phrases</h2>
+    <ul id="unique-phrases-list"></ul>
+    
+    <h2>Similar Users</h2>
+    <ul id="similar-users-list"></ul>
+    
+    <audio id="audio-player" controls style="display:none;"></audio>
+    
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+        let transcriptionText = '';
+
+        document.getElementById('start-record').addEventListener('click', async () => {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+            mediaRecorder.start();
+            audioChunks = [];
+
+            mediaRecorder.addEventListener('dataavailable', event => {
+                audioChunks.push(event.data);
+            });
+
+            document.getElementById('start-record').disabled = true;
+            document.getElementById('stop-record').disabled = false;
+        });
+
+        document.getElementById('stop-record').addEventListener('click', () => {
+            mediaRecorder.stop();
+
+            mediaRecorder.addEventListener('stop', () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                const audioUrl = URL.createObjectURL(audioBlob);
+                const audioPlayer = document.getElementById('audio-player');
+                
+                audioPlayer.src = audioUrl;
+                audioPlayer.style.display = 'block';
+                
+                document.getElementById('play-audio').style.display = 'block';
+                document.getElementById('transcribe-audio').style.display = 'block';
+                
+                document.getElementById('start-record').disabled = false;
+                document.getElementById('stop-record').disabled = true;
+            });
+        });
+
+        document.getElementById('play-audio').addEventListener('click', () => {
+            const audioPlayer = document.getElementById('audio-player');
+            audioPlayer.play();
+        });
+
+        document.getElementById('transcribe-audio').addEventListener('click', () => {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            const formData = new FormData();
+            formData.append('file', audioBlob, 'audio.webm');
+            formData.append('user_id', 1);
+
+            $.ajax({
+                url: '/transcribe',
+                type: 'POST',
+                data: formData,
+                processData: false,
+                contentType: false,
+                success: function(response) {
+                    transcriptionText = response.transcription;
+                    $('#transcription').text(transcriptionText);
+                    updateFrequentWords(response.most_frequent_words);
+                    updateUniquePhrases(response.unique_phrases);
+                    updateSimilarUsers(response.similar_users);
+
+                    document.getElementById('translate-text').style.display = 'block';
+                },
+                error: function(xhr, status, error) {
+                    console.error('Error:', error);
+                    console.error('XHR:', xhr);
+                    alert('Error in transcription: ' + xhr.responseText);
+                }
+            });
+        });
+
+        document.getElementById('translate-text').addEventListener('click', () => {
+            if (!transcriptionText) {
+                alert('Please transcribe the audio first.');
+                return;
+            }
+
+            $.post('/translate', { text: transcriptionText }, function(translated) {
+                $('#translated-text').text(translated.translated_text);
+            }).fail(function(error) {
+                console.error('Error:', error);
+                alert('Error in translation: ' + error.responseText);
+            });
+        });
+
+        function updateFrequentWords(words) {
+            const tbody = $('#frequent-words-table tbody');
+            tbody.empty();
+            words.forEach(word => {
+                tbody.append(`<tr><td>${word[0]}</td><td>${word[1]}</td></tr>`);
+            });
+        }
+
+        function updateUniquePhrases(phrases) {
+            const ul = $('#unique-phrases-list');
+            ul.empty();
+            phrases.forEach(phrase => {
+                ul.append(`<li>${phrase}</li>`);
+            });
+        }
+
+        function updateSimilarUsers(users) {
+            const ul = $('#similar-users-list');
+            ul.empty();
+            users.forEach(user => {
+                ul.append(`<li>User ID: ${user}</li>`);
+            });
+        }
+    </script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
